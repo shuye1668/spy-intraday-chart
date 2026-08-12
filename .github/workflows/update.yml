@@ -1,0 +1,49 @@
+name: update-spy-candles
+
+# 用 GitHub 的雲端 runner 定時抓 SPY 1 分鐘 K 線並發布。
+# SPY 是美股，yfinance 從海外 runner 抓得到（台股資料源才會封鎖海外 IP）。
+# 因此這個更新完全與任何本機主機無關 —— 502 / Boss 全部關機也照樣跑。
+on:
+  schedule:
+    # cron 是 UTC。美股常規盤 = UTC 13:30–20:00（夏令）/ 14:30–21:00（冬令）。
+    # 這裡涵蓋兩者：UTC 每天 13–21 點每 30 分更新一次盤中；另加 21:30 收盤定版。
+    - cron: "*/30 13-21 * * 1-5"
+    - cron: "30 21 * * 1-5"
+  workflow_dispatch:        # 允許手動觸發（Actions 頁面按鈕）
+
+# 讓 workflow 有權限 push 回 repo
+permissions:
+  contents: write
+
+# 同一時間只跑一個，新的取代排隊中的舊的
+concurrency:
+  group: update-spy
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: pip install --quiet yfinance pandas
+
+      - name: Fetch latest SPY candles
+        run: python export_candles.py --recent 5 --out .
+
+      - name: Commit & push if changed
+        run: |
+          git config user.name  "spy-chart-bot"
+          git config user.email "spy-chart-bot@users.noreply.github.com"
+          if [ -n "$(git status --porcelain)" ]; then
+            git add -A
+            git commit -m "update candles $(date -u +'%Y-%m-%d %H:%M UTC')"
+            git push
+          else
+            echo "no change"
+          fi
